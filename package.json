@@ -4,6 +4,8 @@
   "description": "",
   "main": "test.js",
   "dependencies": {
+    "@types/esprima": "^4.0.0",
+    "@types/glob": "^5.0.32",
     "esprima": "^4.0.0",
     "glob": "^7.1.2",
     "lodash": "^4.17.4"
