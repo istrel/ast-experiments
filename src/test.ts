@@ -26,9 +26,20 @@ glob(basisFolderName + '/**/*.js', function (err, relativePathnames: string[]) {
             if (node.type === 'CallExpression' &&
                 node.callee.type === 'Identifier' &&
                 node.callee.name === 'require' &&
-                node.arguments.length === 1) {
+                node.arguments.length === 1
+            ) {
+
                 let stringNode = node.arguments[0];
-                let requireString = node.arguments[0].value;
+
+                if (stringNode.type != 'Literal') {
+                  return;
+                }
+
+                let requireString = stringNode.value;
+
+                if (typeof requireString != 'string') {
+                  return;
+                }
 
                 if (typeof requireString !== 'string') {
                     console.log('INCORRECT: ', requireString);
