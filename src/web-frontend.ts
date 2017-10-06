@@ -3,6 +3,7 @@ import * as esprima from 'esprima';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as basis from 'basisjs';
+import * as csstree from 'css-tree';
 
 const tokenize = basis.require('basis.template.tokenize');
 
@@ -178,7 +179,28 @@ function processL10nFile(absolutePath: string) {
 }
 
 function processCssFile(absolutePath: string) {
-  console.log('TODO: Processing .css files not implemented - skipping')
+  const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
+  const ast = csstree.parse(fileContents);
+
+  csstree.walk(ast, function(node) {
+    if (node.type === 'Url') {
+      const dirname = path.dirname(absolutePath);
+      let relativePath;
+
+      if (node.value.type === 'Raw') {
+        relativePath = node.value.value;
+      } else if (node.value.type === 'String') {
+        // dirty way to escape
+        relativePath = eval(node.value.value);
+      } else {
+        throw new Error(`unexpected type of node.value - ${node.value.type}`)
+      }
+
+      const absolutePathToRequiredFile = path.resolve(dirname, relativePath);
+
+      filesToVisit.push(absolutePathToRequiredFile);
+    }
+  });
 }
 
 // parse css for images?
@@ -206,9 +228,12 @@ function getRequiredFiles(absolutePath: string) {
           processCssFile(nextFile);
           break;
         case '.png':
+        case '.gif':
+        case '.woff':
+        case '.jpg':
         case '.svg':
         case '.json':
-          // nothing to do with json,svg and css. Just mark it as visited
+          // nothing to do with json, svg and png. Just mark it as visited
           break;
         default:
           throw new Error(`${nextFile} has not valid extension`)
