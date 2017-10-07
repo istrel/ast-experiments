@@ -10,6 +10,7 @@
     "css-tree": "git+https://github.com/csstree/csstree.git",
     "esprima": "^4.0.0",
     "glob": "^7.1.2",
+    "htmlparser2": "^3.9.2",
     "lodash": "^4.17.4"
   },
   "devDependencies": {},
