@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as basis from 'basisjs';
 import * as csstree from 'css-tree';
+import * as child_process from 'child_process';
 
 const tokenize = basis.require('basis.template.tokenize');
 
@@ -371,4 +372,16 @@ const visited = {};
   }
 }, {})
 
-console.log(Object.keys(visited));
+
+const existing = {};
+
+const srcPath = path.resolve('../web-frontend/src');
+child_process.execSync('git ls-files', { cwd: srcPath })
+  .toString()
+  .split('\n')
+  .map(relative => path.resolve(srcPath, relative))
+  .forEach(function(path) {
+    if (!visited[path]) {
+      console.log(path);
+    }
+  });
