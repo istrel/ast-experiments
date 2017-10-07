@@ -10,7 +10,6 @@ const tokenize = basis.require('basis.template.tokenize');
 
 var basisFolderName = path.resolve('../../basisjs/src/basis');
 
-console.log(basisFolderName);
 const pathToRoot = path.resolve('../web-frontend');
 const actiPath = path.resolve(pathToRoot, 'src/acti');
 
@@ -197,6 +196,8 @@ function processPreset(appRelativePath: string, startFile: string) {
     const tokens = tokenize(fileContents);
     const tokensToParse = tokens.slice(0);
 
+    let l10nPath = '';
+
     while (tokensToParse.length > 0) {
       const nextToken = tokensToParse.pop();
 
@@ -210,6 +211,10 @@ function processPreset(appRelativePath: string, startFile: string) {
         nextToken.attrs.forEach(function(attr) {
           if (attr.name === 'src') {
             const requireString = attr.value;
+
+            if (nextToken.name === 'l10n') {
+              l10nPath = requireString;
+            }
 
             // parsing tmpl files differs a bit, so I copy/pasted it
             if (requireString[0] === '.') {
@@ -252,6 +257,11 @@ function processPreset(appRelativePath: string, startFile: string) {
       }
 
       tokensToParse.push(...nextToken.children);
+    }
+
+    if (!l10nPath && fileContents.match(/\bl10n:\b/)) {
+      const l10nPath = absolutePath.replace(/\.tmpl$/, '.l10n');
+      filesToVisit.push(l10nPath);
     }
   }
 
@@ -301,7 +311,7 @@ function processPreset(appRelativePath: string, startFile: string) {
           break;
         case 'enum-markup':
           const markupObject = getAt(dict, pathFragments);
-          for (const key of markupObject) {
+          for (const key in markupObject) {
             const markup = markupObject[key];
             processTmplContents(absolutePath, markup);
           }
