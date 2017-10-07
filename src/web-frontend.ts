@@ -107,6 +107,72 @@ function processJsFile(absolutePath: string) {
       } else {
         console.log('WTF: ', requireString);
       }
+    } else {
+      // check for require('basis.l10n').dictionary(...)
+      if (node.type !== 'CallExpression') {
+        return;
+      }
+
+      if (node.callee.type !== 'MemberExpression') {
+        return;
+      }
+
+      if (node.callee.object.type !== 'CallExpression') {
+        return;
+      }
+
+      const potentialRequire = node.callee.object;
+
+      if (!potentialRequire) {
+        return;
+      }
+
+      if (
+        !(
+          potentialRequire.callee.type == 'Identifier' &&
+          potentialRequire.callee.name === 'require' &&
+          potentialRequire.arguments.length === 1
+        )
+      ) {
+        return;
+      }
+
+      const potentialRequireArg = potentialRequire.arguments[0];
+
+      if (potentialRequireArg.type !== 'Literal') {
+        return;
+      }
+
+      if (potentialRequireArg.value !== 'basis.l10n') {
+        return;
+      }
+
+      if (node.callee.property.type !== 'Identifier') {
+        return;
+      }
+
+      if (node.callee.property.name !== 'dictionary') {
+        return;
+      }
+
+      if (node.arguments.length !== 1) {
+        return;
+      }
+
+      const singleArg = node.arguments[0];
+      const argCode = fileContents.substring(singleArg.range[0], singleArg.range[1]);
+      const dirname = path.dirname(absolutePath);
+
+      const evaledPath = new Function('__dirname', '__filename', `return ${argCode};`)(dirname, absolutePath);
+
+      // basis:ui paths are exceptions
+      if (evaledPath.substr(0, 6) === 'basis:') {
+        return;
+      }
+
+      const resolvedPath = path.resolve(evaledPath);
+
+      filesToVisit.push(resolvedPath);
     }
   });
 }
@@ -236,7 +302,7 @@ function processCssFile(absolutePath: string) {
       if (node.value.type === 'Raw') {
         relativePath = node.value.value;
       } else if (node.value.type === 'String') {
-        // dirty way to escape
+        // dirty way to unescape
         relativePath = eval(node.value.value);
       } else {
         throw new Error(`unexpected type of node.value - ${node.value.type}`)
