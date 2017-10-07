@@ -111,8 +111,7 @@ function processJsFile(absolutePath: string) {
   });
 }
 
-function processTmplFile(absolutePath: string) {
-  const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
+function processTmplContents(absolutePath: string, fileContents: string) {
   const tokens = tokenize(fileContents);
   const tokensToParse = tokens.slice(0);
 
@@ -156,7 +155,7 @@ function processTmplFile(absolutePath: string) {
             const absolutePath = path.resolve(actiPath, fromActiSegment);
             filesToVisit.push(absolutePath);
           } else {
-            console.log('WTF: ', requireString);
+            throw new Error('WTF: ' + requireString);
           }
         }
       });
@@ -174,8 +173,55 @@ function processTmplFile(absolutePath: string) {
   }
 }
 
+function processTmplFile(absolutePath: string) {
+  const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
+
+  processTmplContents(absolutePath, fileContents);
+}
+
+function getAt(object, pathFragments) {
+  if (pathFragments.length === 0) {
+    return object;
+  } else {
+    return getAt(object[pathFragments[0]], pathFragments.slice(1));
+  }
+}
+
 function processL10nFile(absolutePath: string) {
-  console.log('TODO: Processing .l10n files not implemented - skipping')
+  const fileContents = fs.readFileSync(absolutePath, 'utf8');
+  const json = JSON.parse(fileContents);
+
+  if (!json._meta || !json._meta.type) {
+    return;
+  }
+
+  const typedefs = json._meta.type;
+  const dict = json['ru-RU'];
+
+  for (const key in typedefs) {
+    const dictType = typedefs[key];
+    const pathFragments = key.split('.');
+
+    switch (dictType) {
+      case 'markup':
+        const markup = getAt(dict, pathFragments);
+        processTmplContents(absolutePath, markup);
+        break;
+      case 'plural-markup':
+        const markupArray = getAt(dict, pathFragments);
+        markupArray.forEach(function(markup) {
+          processTmplContents(absolutePath, markup);
+        });
+        break;
+      case 'enum-markup':
+        const markupObject = getAt(dict, pathFragments);
+        for (const key of markupObject) {
+          const markup = markupObject[key];
+          processTmplContents(absolutePath, markup);
+        }
+        break;
+    }
+  }
 }
 
 function processCssFile(absolutePath: string) {
@@ -233,7 +279,7 @@ function getRequiredFiles(absolutePath: string) {
         case '.jpg':
         case '.svg':
         case '.json':
-          // nothing to do with json, svg and png. Just mark it as visited
+          // nothing to do with json and images. Just mark it as visited
           break;
         default:
           throw new Error(`${nextFile} has not valid extension`)
