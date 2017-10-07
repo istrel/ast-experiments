@@ -483,7 +483,7 @@ child_process.execSync('git ls-files', { cwd: srcPath })
   .split('\n')
   .map(relative => path.resolve(srcPath, relative))
   .forEach(function(path) {
-    if (!visited[path]) {
+    if (!visited[path] && fs.existsSync(path) && fs.statSync(path).isFile()) {
       console.log(path);
     }
   });
