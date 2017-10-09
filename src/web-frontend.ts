@@ -247,12 +247,32 @@ function processPreset(appRelativePath: string, startFile: string) {
           }
         });
       } else if (nextToken.name === 'img') {
+        const absolutePathToAppDir = path.resolve(pathToRoot, appRelativePath);
+        const dirname = path.dirname(absolutePathToAppDir);
+
         nextToken.attrs.forEach(function(attr) {
           if (attr.name === 'src' && attr.value[0] != '{') {
-            const absolutePathToAppDir = path.resolve(pathToRoot, appRelativePath);
-            const dirname = path.dirname(absolutePathToAppDir);
             const absolutePathToRequiredFile = path.resolve(dirname, attr.value);
             filesToVisit.push(absolutePathToRequiredFile);
+          }
+
+          if (attr.name === 'srcset' && attr.value[0] != '{') {
+            const srcsetAttr =
+              attr.value
+                .replace(/\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .replace(/^\s+/g, '')
+                .replace(/\s+$/g, '');
+            const images = srcsetAttr.split(/\s*,\s*/).map(srcsetStr => srcsetStr.split(' ')[0]);
+
+            images.forEach(function(image) {
+              if (image[0] == '{') {
+                return;
+              }
+
+              const absolutePathToRequiredFile = path.resolve(dirname, image);
+              filesToVisit.push(absolutePathToRequiredFile);
+            });
           }
         })
       }
@@ -468,7 +488,10 @@ const visited = {};
 
 // whitelist some files
 [
-  'src/acti/old-browser/detect.js'
+  'src/acti/old-browser/detect.js',
+  'src/agent/maintenance/img/bg.png',
+  'src/agent/maintenance/img/cover.jpg',
+  'src/agent/maintenance/img/logo.png'
 ]
   .forEach(function(relpath) {
     const absolutePath = path.resolve(pathToRoot, relpath);
