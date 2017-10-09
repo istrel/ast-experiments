@@ -192,7 +192,7 @@ function processPreset(appRelativePath: string, startFile: string) {
     });
   }
 
-  function processTmplContents(absolutePath: string, fileContents: string) {
+  function processTmplContents(absolutePath: string, fileContents: string, appRelativePath: string) {
     const tokens = tokenize(fileContents);
     const tokensToParse = tokens.slice(0);
 
@@ -249,7 +249,8 @@ function processPreset(appRelativePath: string, startFile: string) {
       } else if (nextToken.name === 'img') {
         nextToken.attrs.forEach(function(attr) {
           if (attr.name === 'src' && attr.value[0] != '{') {
-            const dirname = path.dirname(absolutePath);
+            const absolutePathToAppDir = path.resolve(pathToRoot, appRelativePath);
+            const dirname = path.dirname(absolutePathToAppDir);
             const absolutePathToRequiredFile = path.resolve(dirname, attr.value);
             filesToVisit.push(absolutePathToRequiredFile);
           }
@@ -265,14 +266,14 @@ function processPreset(appRelativePath: string, startFile: string) {
     }
   }
 
-  function processTmplFile(absolutePath: string) {
+  function processTmplFile(absolutePath: string, appRelativePath: string) {
     const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
 
     if (fileContents == null) {
       throw new Error(`${absolutePath} does not exist`);
     }
 
-    processTmplContents(absolutePath, fileContents);
+    processTmplContents(absolutePath, fileContents, appRelativePath);
   }
 
   function getAt(object, pathFragments) {
@@ -301,19 +302,19 @@ function processPreset(appRelativePath: string, startFile: string) {
       switch (dictType) {
         case 'markup':
           const markup = getAt(dict, pathFragments);
-          processTmplContents(absolutePath, markup);
+          processTmplContents(absolutePath, markup, appRelativePath);
           break;
         case 'plural-markup':
           const markupArray = getAt(dict, pathFragments);
           markupArray.forEach(function(markup) {
-            processTmplContents(absolutePath, markup);
+            processTmplContents(absolutePath, markup, appRelativePath);
           });
           break;
         case 'enum-markup':
           const markupObject = getAt(dict, pathFragments);
           for (const key in markupObject) {
             const markup = markupObject[key];
-            processTmplContents(absolutePath, markup);
+            processTmplContents(absolutePath, markup, appRelativePath);
           }
           break;
       }
@@ -337,7 +338,7 @@ function processPreset(appRelativePath: string, startFile: string) {
             processL10nFile(nextFile);
             break;
           case '.tmpl':
-            processTmplFile(nextFile);
+            processTmplFile(nextFile, appRelativePath);
             break;
           case '.css':
             processCssFile(nextFile, filesToVisit);
