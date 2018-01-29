@@ -115,6 +115,11 @@ function processCssFile(absolutePath: string, filesToVisit) {
   });
 }
 
+const nodeMetaKeys = ['loc', 'range', 'start', 'end', 'type', 'parent'];
+function isNode(potentialNode) {
+  return potentialNode && typeof potentialNode === 'object' && potentialNode.type;
+}
+
 function processPreset(
   {
     appRelativePath,
@@ -122,14 +127,16 @@ function processPreset(
     visitedPropertiesByFile,
     exportedPropertiesByFile,
     numberOfAllRequires,
-    numberOfRequiresWithProp
+    numberOfRequiresWithProp,
+    visitedAtAsterisk
   } : {
     appRelativePath: string,
     startFile: string,
     visitedPropertiesByFile : object,
     exportedPropertiesByFile : object,
     numberOfAllRequires : object,
-    numberOfRequiresWithProp : object
+    numberOfRequiresWithProp : object,
+    visitedAtAsterisk : object
   }
 ) {
   const visited = {};
@@ -149,7 +156,31 @@ function processPreset(
   function processJsFile(absolutePath: string) {
     const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
 
-    esprima.parseScript(fileContents, { range: true }, function (node, meta) {
+    const tree = esprima.parseScript(fileContents, { range: true })
+
+    function walkNode(node, callback) {
+      callback(node);
+
+      for (const key in node) {
+        if (nodeMetaKeys.indexOf(key) !== -1) {
+          continue;
+        }
+
+        const potentialChildNode = node[key];
+
+        if (Array.isArray(potentialChildNode)) {
+          potentialChildNode.forEach(function(potentialDescendantNode) {
+            if (isNode(potentialDescendantNode)) {
+              walkNode({ ...potentialDescendantNode, parent: node }, callback);
+            }
+          });
+        } else if (isNode(potentialChildNode)) {
+          walkNode({ ...potentialChildNode, parent: node }, callback);
+        }
+      }
+    }
+
+    function parseNode(node) {
       // Search for properties for tree shaking.
       // For example search for require('./module/details/index.js').View;
       // Where './module/details/index.js' - is a target file, and 'View' - used property
@@ -213,7 +244,13 @@ function processPreset(
         const absPathToRequiredFile = absolutePathFromRequire({ requireString, appPath, absolutePath });
         if (absPathToRequiredFile !== null) {
           markAsVisitedAtAll(absPathToRequiredFile);
-          filesToVisit.push(absPathToRequiredFile)
+          filesToVisit.push(absPathToRequiredFile);
+
+          // if this is require inside `var myNode = require('acti:ui/field.js').myNode;`
+          if (node.parent && node.parent.type === 'VariableDeclarator') {
+            visitedAtAsterisk[absPathToRequiredFile] = visitedAtAsterisk[absPathToRequiredFile] || [];
+            visitedAtAsterisk[absPathToRequiredFile].push(absolutePath);
+          }
         }
       } else {
         // check for require('basis.l10n').dictionary(...)
@@ -282,7 +319,9 @@ function processPreset(
 
         filesToVisit.push(resolvedPath);
       }
-    });
+    }
+
+    walkNode(tree, parseNode);
   }
 
   function processTmplContents(absolutePath: string, fileContents: string, appRelativePath: string) {
@@ -512,6 +551,7 @@ const visitedPropertiesByFile = {};
 const exportedPropertiesByFile = {};
 const numberOfAllRequires = {};
 const numberOfRequiresWithProp = {};
+const visitedAtAsterisk = {};
 
 // start parsing from js
 [
@@ -524,7 +564,8 @@ const numberOfRequiresWithProp = {};
     visitedPropertiesByFile,
     exportedPropertiesByFile,
     numberOfAllRequires,
-    numberOfRequiresWithProp
+    numberOfRequiresWithProp,
+    visitedAtAsterisk
   });
 
   for (var key in presetVisited) {
@@ -644,6 +685,10 @@ for (const filename in visitedPropertiesByFile) {
       if (propName in visitedProperties === false) {
         console.log(`Exported name "${propName}" in file "${filename}" exported, but not used`)
       }
+    }
+
+    if (visitedAtAsterisk[filename]) {
+      console.log(`Unexpected global require of ${filename} in files: ${visitedAtAsterisk[filename].join(' , ')}`)
     }
   }
 }
