@@ -1,4 +1,5 @@
 import * as esprima from 'esprima';
+import * as ESTree from 'estree';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as csstree from 'css-tree';
@@ -16,6 +17,77 @@ const actiPath = path.resolve(pathToRoot, 'src/acti');
 // basis.data.value -> /Users/strelkov/work/basisjs/src/basis/data/value.js
 function getAbsolutePath(basisRequire) {
   return basisFolderName + '/' + basisRequire.split('.').slice(1).join('/') + '.js';
+}
+
+function isRequireOrResource(node) {
+  return node.type === 'CallExpression' &&
+        node.callee.type === 'Identifier' &&
+        (node.callee.name === 'require' || node.callee.name === 'resource' || node.callee.name === 'asset') &&
+        node.arguments.length === 1;
+}
+
+function toRelative(dottedPath) {
+  return dottedPath.replace(/\./g, '/') + '.js';
+}
+
+function addOptionalJsExtension(absolutePath: string) {
+  if (path.extname(absolutePath) === '') {
+    return absolutePath + '.js';
+  } else {
+    return absolutePath;
+  }
+}
+
+function absolutePathFromRequire({ requireString, absolutePath, appPath } : { requireString : string, absolutePath : string, appPath : string }) {
+  if (requireString[0] === '.') {
+    // console.log('RELATIVE: ', requireString);
+    const dirname = path.dirname(absolutePath);
+    const absolutePathToRequiredFile = path.resolve(dirname, requireString);
+    return addOptionalJsExtension(absolutePathToRequiredFile);
+  } else if (requireString.substr(0, 6) === 'basis.' || requireString === 'socketMessenger' || requireString === ('aviProUI') || requireString === 'reactUI') {
+    // console.log('BASIS. ', requireString);
+    // skip libs
+    return null;
+  } else if (requireString.substr(0, 4) === 'app.') {
+    // console.log('APP. ', requireString);
+    const fromAppSegment = requireString.substr(4);
+    const relative = toRelative(fromAppSegment);
+    const absolutePath = path.resolve(appPath, relative);
+    return absolutePath;
+  } else if (requireString.substr(0, 4) === 'app:') {
+    // console.log('APP: ', requireString);
+    const fromAppSegment = requireString.substr(4);
+    const absolutePath = path.resolve(appPath, fromAppSegment);
+    return addOptionalJsExtension(absolutePath);
+  } else if (requireString.substr(0, 5) === 'acti.') {
+    // console.log('ACTI. ', requireString);
+    const fromActiSegment = requireString.substr(5);
+    const relative = toRelative(fromActiSegment);
+    const absolutePath = path.resolve(actiPath, relative);
+    return absolutePath;
+  } else if (requireString.substr(0, 5) === 'acti:') {
+    // console.log('ACTI: ', requireString);
+    const fromActiSegment = requireString.substr(5);
+    const absolutePath = path.resolve(actiPath, fromActiSegment);
+    return addOptionalJsExtension(absolutePath);
+  } else if (requireString[0] === '/') {
+    const relativeFromRoot = requireString.substr(1);
+    const absolutePath = path.resolve(pathToRoot, relativeFromRoot);
+    return absolutePath;
+  } else {
+    throw new Error('WTF: ' + requireString);
+  }
+}
+
+function isModuleExports(node : ESTree.Node) {
+  return node.type === 'MemberExpression' &&
+    (node.object.type === 'Identifier' && node.object.name === 'module') &&
+    (node.property.type === 'Identifier' && node.property.name === 'exports');
+}
+
+function markExportedProp(absolutePath : string, propName : string, exportedPropertiesByFile : object) {
+  exportedPropertiesByFile[absolutePath] = exportedPropertiesByFile[absolutePath] || {};
+  exportedPropertiesByFile[absolutePath][propName] = true;
 }
 
 function processCssFile(absolutePath: string, filesToVisit) {
@@ -43,33 +115,86 @@ function processCssFile(absolutePath: string, filesToVisit) {
   });
 }
 
-function processPreset(appRelativePath: string, startFile: string) {
+function processPreset(
+  {
+    appRelativePath,
+    startFile,
+    visitedPropertiesByFile,
+    exportedPropertiesByFile,
+    numberOfAllRequires,
+    numberOfRequiresWithProp
+  } : {
+    appRelativePath: string,
+    startFile: string,
+    visitedPropertiesByFile : object,
+    exportedPropertiesByFile : object,
+    numberOfAllRequires : object,
+    numberOfRequiresWithProp : object
+  }
+) {
   const visited = {};
   const filesToVisit = [];
   const appPath = path.resolve(pathToRoot, appRelativePath);
 
-  function toRelative(dottedPath) {
-    return dottedPath.replace(/\./g, '/') + '.js';
+  function markAsVisitedAtAll(filename : string) {
+    numberOfAllRequires[filename] = numberOfAllRequires[filename] || 0;
+    numberOfAllRequires[filename]++;
   }
 
-  function addOptionalJsExtension(absolutePath: string) {
-    if (path.extname(absolutePath) === '') {
-      return absolutePath + '.js';
-    } else {
-      return absolutePath;
-    }
+  function markAsVisitedByProp(filename : string) {
+    numberOfRequiresWithProp[filename] = numberOfRequiresWithProp[filename] || 0;
+    numberOfRequiresWithProp[filename]++;
   }
 
   function processJsFile(absolutePath: string) {
     const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
 
     esprima.parseScript(fileContents, { range: true }, function (node, meta) {
-      if (node.type === 'CallExpression' &&
-        node.callee.type === 'Identifier' &&
-        (node.callee.name === 'require' || node.callee.name === 'resource' || node.callee.name === 'asset') &&
-        node.arguments.length === 1
-      ) {
-        const stringNode = node.arguments[0];
+      // Search for properties for tree shaking.
+      // For example search for require('./module/details/index.js').View;
+      // Where './module/details/index.js' - is a target file, and 'View' - used property
+      if (node.type === 'MemberExpression' && isRequireOrResource(node.object) && node.property.type === 'Identifier') {
+        const callExpression : ESTree.CallExpression = node.object as any;
+        const stringNode : ESTree.SimpleLiteral = callExpression.arguments[0] as any;
+        const requireString = stringNode.value;
+
+        if (typeof requireString != 'string') {
+          return;
+        }
+
+        if (typeof requireString !== 'string') {
+          console.log('INCORRECT: ', requireString);
+        }
+
+        const absPathToRequiredFile = absolutePathFromRequire({ requireString, appPath, absolutePath });
+        if (absPathToRequiredFile !== null) {
+          const propName = node.property.name;
+
+          visitedPropertiesByFile[absPathToRequiredFile] = visitedPropertiesByFile[absPathToRequiredFile] || {};
+          visitedPropertiesByFile[absPathToRequiredFile][propName] = true;
+
+          markAsVisitedByProp(absPathToRequiredFile);
+        }
+      // search for exporting `module.exports = { foo: one, bar: somethingElse };`
+      } else if (node.type === 'AssignmentExpression' && isModuleExports(node.left) && node.right.type === 'ObjectExpression') {
+        const objExpression = node.right;
+        objExpression.properties.forEach(function(propertyNode) {
+          if (propertyNode.type !== 'Property') {
+            throw new Error('OMG! I expected property but got: ' + JSON.stringify(propertyNode) + ' in ' + absolutePath);
+          }
+
+          if (propertyNode.key.type === 'Identifier') {
+            markExportedProp(absolutePath, propertyNode.key.name, exportedPropertiesByFile);
+          } else if (propertyNode.key.type === 'Literal' && typeof propertyNode.key.value === 'string') {
+            markExportedProp(absolutePath, propertyNode.key.value, exportedPropertiesByFile);
+          } else {
+            throw new Error('OMG! I expected property with identifier or string literal key but got: ' + JSON.stringify(propertyNode)  + ' in ' + absolutePath);
+          }
+        })
+      // search for simple require
+      } else if (isRequireOrResource(node)) {
+        const callExpression : ESTree.CallExpression = node as any;
+        const stringNode = callExpression.arguments[0];
 
         if (stringNode.type != 'Literal') {
           return;
@@ -85,42 +210,10 @@ function processPreset(appRelativePath: string, startFile: string) {
           console.log('INCORRECT: ', requireString);
         }
 
-        if (requireString[0] === '.') {
-          // console.log('RELATIVE: ', requireString);
-          const dirname = path.dirname(absolutePath);
-          const absolutePathToRequiredFile = path.resolve(dirname, requireString);
-          filesToVisit.push(addOptionalJsExtension(absolutePathToRequiredFile));
-        } else if (requireString.substr(0, 6) === 'basis.' || requireString === 'socketMessenger' || requireString === ('aviProUI')) {
-          // console.log('BASIS. ', requireString);
-          // skip libs
-        } else if (requireString.substr(0, 4) === 'app.') {
-          // console.log('APP. ', requireString);
-          const fromAppSegment = requireString.substr(4);
-          const relative = toRelative(fromAppSegment);
-          const absolutePath = path.resolve(appPath, relative);
-          filesToVisit.push(absolutePath);
-        } else if (requireString.substr(0, 4) === 'app:') {
-          // console.log('APP: ', requireString);
-          const fromAppSegment = requireString.substr(4);
-          const absolutePath = path.resolve(appPath, fromAppSegment);
-          filesToVisit.push(addOptionalJsExtension(absolutePath));
-        } else if (requireString.substr(0, 5) === 'acti.') {
-          // console.log('ACTI. ', requireString);
-          const fromActiSegment = requireString.substr(5);
-          const relative = toRelative(fromActiSegment);
-          const absolutePath = path.resolve(actiPath, relative);
-          filesToVisit.push(absolutePath);
-        } else if (requireString.substr(0, 5) === 'acti:') {
-          // console.log('ACTI: ', requireString);
-          const fromActiSegment = requireString.substr(5);
-          const absolutePath = path.resolve(actiPath, fromActiSegment);
-          filesToVisit.push(addOptionalJsExtension(absolutePath));
-        } else if (requireString[0] === '/') {
-          const relativeFromRoot = requireString.substr(1);
-          const absolutePath = path.resolve(pathToRoot, relativeFromRoot);
-          filesToVisit.push(absolutePath);
-        } else {
-          throw new Error('WTF: ' + requireString);
+        const absPathToRequiredFile = absolutePathFromRequire({ requireString, appPath, absolutePath });
+        if (absPathToRequiredFile !== null) {
+          markAsVisitedAtAll(absPathToRequiredFile);
+          filesToVisit.push(absPathToRequiredFile)
         }
       } else {
         // check for require('basis.l10n').dictionary(...)
@@ -415,14 +508,24 @@ function processPreset(appRelativePath: string, startFile: string) {
 }
 
 const visited = {};
+const visitedPropertiesByFile = {};
+const exportedPropertiesByFile = {};
+const numberOfAllRequires = {};
+const numberOfRequiresWithProp = {};
 
 // start parsing from js
 [
   ['src/avipro/app', 'src/avipro/app/index.js'],
-  ['src/avipro/app', 'src/avipro/remote/index.js'],
-  ['src/avipro/app', 'src/avipro/terms/index.js'],
+  ['src/avipro/app', 'src/avipro/remote/index.js']
 ].forEach(function([appRelativePath, startFile]) {
-  const presetVisited = processPreset(appRelativePath, startFile);
+  const presetVisited = processPreset({
+    appRelativePath,
+    startFile,
+    visitedPropertiesByFile,
+    exportedPropertiesByFile,
+    numberOfAllRequires,
+    numberOfRequiresWithProp
+  });
 
   for (var key in presetVisited) {
     visited[key] = true;
@@ -432,8 +535,7 @@ const visited = {};
 // parse html files
 [
   'src/avipro/index.html',
-  'src/avipro/remote.html',
-  'src/avipro/terms.html'
+  'src/avipro/remote.html'
 ].forEach(function(relativePathToHtml) {
   const absolutePath = path.resolve(pathToRoot, relativePathToHtml);
 
@@ -521,8 +623,27 @@ child_process.execSync('git ls-files', { cwd: srcPath })
   .split('\n')
   .map(relative => path.resolve(srcPath, relative))
   .forEach(function(path) {
+    if (path.match('src/react')) {
+      return;
+    }
+
     if (!visited[path] && fs.existsSync(path) && fs.statSync(path).isFile()) {
       console.log(path);
       fs.unlinkSync(path);
     }
   });
+
+for (const filename in visitedPropertiesByFile) {
+  if (filename in exportedPropertiesByFile === false) {
+    // delete visitedPropertiesByFile;
+  } else {
+    const visitedProperties = visitedPropertiesByFile[filename];
+    const exportedProperties = exportedPropertiesByFile[filename];
+
+    for (var propName in exportedProperties) {
+      if (propName in visitedProperties === false) {
+        console.log(`Exported name "${propName}" in file "${filename}" exported, but not used`)
+      }
+    }
+  }
+}
