@@ -681,10 +681,22 @@ for (const filename in visitedPropertiesByFile) {
     const visitedProperties = visitedPropertiesByFile[filename];
     const exportedProperties = exportedPropertiesByFile[filename];
 
+    const notUsedExports = [];
+
     for (var propName in exportedProperties) {
       if (propName in visitedProperties === false) {
-        console.log(`Exported name "${propName}" in file "${filename}" exported, but not used`)
+        notUsedExports.push(propName);
       }
+    }
+
+    for (var propName in visitedProperties) {
+      if (propName in exportedProperties === false) {
+        console.log(`Exported property ${propName} not found in ${filename}`);
+      }
+    }
+
+    if (notUsedExports.length) {
+      console.log(`Exported names ${notUsedExports.map(name => `"${name}"`).join(', ')} in file "${filename}" exported, but not used`)
     }
 
     if (visitedAtAsterisk[filename]) {
