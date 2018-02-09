@@ -21,9 +21,9 @@ function getAbsolutePath(basisRequire) {
 
 function isRequireOrResource(node) {
   return node.type === 'CallExpression' &&
-        node.callee.type === 'Identifier' &&
-        (node.callee.name === 'require' || node.callee.name === 'resource' || node.callee.name === 'asset') &&
-        node.arguments.length === 1;
+    node.callee.type === 'Identifier' &&
+    (node.callee.name === 'require' || node.callee.name === 'resource' || node.callee.name === 'asset') &&
+    node.arguments.length === 1;
 }
 
 function toRelative(dottedPath) {
@@ -38,10 +38,10 @@ function addOptionalJsExtension(absolutePath: string) {
   }
 }
 
-function absolutePathFromRequire({ requireString, absolutePath, appPath } : { requireString : string, absolutePath : string, appPath : string }) {
+function getAbsolutePathFromRequire({ requireString, absolutePathToParsedFile, appPath }: { requireString: string, absolutePathToParsedFile: string, appPath: string }) {
   if (requireString[0] === '.') {
     // console.log('RELATIVE: ', requireString);
-    const dirname = path.dirname(absolutePath);
+    const dirname = path.dirname(absolutePathToParsedFile);
     const absolutePathToRequiredFile = path.resolve(dirname, requireString);
     return addOptionalJsExtension(absolutePathToRequiredFile);
   } else if (requireString.substr(0, 6) === 'basis.' || requireString === 'socketMessenger' || requireString === ('aviProUI') || requireString === 'reactUI') {
@@ -79,13 +79,13 @@ function absolutePathFromRequire({ requireString, absolutePath, appPath } : { re
   }
 }
 
-function isModuleExports(node : ESTree.Node) {
+function isModuleExports(node: ESTree.Node) {
   return node.type === 'MemberExpression' &&
     (node.object.type === 'Identifier' && node.object.name === 'module') &&
     (node.property.type === 'Identifier' && node.property.name === 'exports');
 }
 
-function markExportedProp(absolutePath : string, propName : string, exportedPropertiesByFile : object) {
+function markExportedProp(absolutePath: string, propName: string, exportedPropertiesByFile: object) {
   exportedPropertiesByFile[absolutePath] = exportedPropertiesByFile[absolutePath] || {};
   exportedPropertiesByFile[absolutePath][propName] = true;
 }
@@ -94,7 +94,7 @@ function processCssFile(absolutePath: string, filesToVisit) {
   const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
   const ast = csstree.parse(fileContents);
 
-  csstree.walk(ast, function(node) {
+  csstree.walk(ast, function (node) {
     if (node.type === 'Url') {
       const dirname = path.dirname(absolutePath);
       let relativePath;
@@ -126,35 +126,23 @@ function processPreset(
     startFile,
     visitedPropertiesByFile,
     exportedPropertiesByFile,
-    numberOfAllRequires,
-    numberOfRequiresWithProp,
-    visitedAtAsterisk
-  } : {
-    appRelativePath: string,
-    startFile: string,
-    visitedPropertiesByFile : object,
-    exportedPropertiesByFile : object,
-    numberOfAllRequires : object,
-    numberOfRequiresWithProp : object,
-    visitedAtAsterisk : object
-  }
+    visitedAtAsterisk,
+    requiresMap
+  }: {
+      appRelativePath: string,
+      startFile: string,
+      visitedPropertiesByFile: object,
+      exportedPropertiesByFile: object,
+      visitedAtAsterisk: object,
+      requiresMap: object
+    }
 ) {
   const visited = {};
   const filesToVisit = [];
   const appPath = path.resolve(pathToRoot, appRelativePath);
 
-  function markAsVisitedAtAll(filename : string) {
-    numberOfAllRequires[filename] = numberOfAllRequires[filename] || 0;
-    numberOfAllRequires[filename]++;
-  }
-
-  function markAsVisitedByProp(filename : string) {
-    numberOfRequiresWithProp[filename] = numberOfRequiresWithProp[filename] || 0;
-    numberOfRequiresWithProp[filename]++;
-  }
-
-  function processJsFile(absolutePath: string) {
-    const fileContents: string = fs.readFileSync(absolutePath, 'utf8');
+  function processJsFile(absolutePathToParsedFile: string) {
+    const fileContents: string = fs.readFileSync(absolutePathToParsedFile, 'utf8');
 
     const tree = esprima.parseScript(fileContents, { range: true })
 
@@ -169,7 +157,7 @@ function processPreset(
         const potentialChildNode = node[key];
 
         if (Array.isArray(potentialChildNode)) {
-          potentialChildNode.forEach(function(potentialDescendantNode) {
+          potentialChildNode.forEach(function (potentialDescendantNode) {
             if (isNode(potentialDescendantNode)) {
               walkNode({ ...potentialDescendantNode, parent: node }, callback);
             }
@@ -185,8 +173,8 @@ function processPreset(
       // For example search for require('./module/details/index.js').View;
       // Where './module/details/index.js' - is a target file, and 'View' - used property
       if (node.type === 'MemberExpression' && isRequireOrResource(node.object) && node.property.type === 'Identifier') {
-        const callExpression : ESTree.CallExpression = node.object as any;
-        const stringNode : ESTree.SimpleLiteral = callExpression.arguments[0] as any;
+        const callExpression: ESTree.CallExpression = node.object as any;
+        const stringNode: ESTree.SimpleLiteral = callExpression.arguments[0] as any;
         const requireString = stringNode.value;
 
         if (typeof requireString != 'string') {
@@ -197,34 +185,32 @@ function processPreset(
           console.log('INCORRECT: ', requireString);
         }
 
-        const absPathToRequiredFile = absolutePathFromRequire({ requireString, appPath, absolutePath });
+        const absPathToRequiredFile = getAbsolutePathFromRequire({ requireString, appPath, absolutePathToParsedFile });
         if (absPathToRequiredFile !== null) {
           const propName = node.property.name;
 
           visitedPropertiesByFile[absPathToRequiredFile] = visitedPropertiesByFile[absPathToRequiredFile] || {};
           visitedPropertiesByFile[absPathToRequiredFile][propName] = true;
-
-          markAsVisitedByProp(absPathToRequiredFile);
         }
-      // search for exporting `module.exports = { foo: one, bar: somethingElse };`
+        // search for exporting `module.exports = { foo: one, bar: somethingElse };`
       } else if (node.type === 'AssignmentExpression' && isModuleExports(node.left) && node.right.type === 'ObjectExpression') {
         const objExpression = node.right;
-        objExpression.properties.forEach(function(propertyNode) {
+        objExpression.properties.forEach(function (propertyNode) {
           if (propertyNode.type !== 'Property') {
-            throw new Error('OMG! I expected property but got: ' + JSON.stringify(propertyNode) + ' in ' + absolutePath);
+            throw new Error('OMG! I expected property but got: ' + JSON.stringify(propertyNode) + ' in ' + absolutePathToParsedFile);
           }
 
           if (propertyNode.key.type === 'Identifier') {
-            markExportedProp(absolutePath, propertyNode.key.name, exportedPropertiesByFile);
+            markExportedProp(absolutePathToParsedFile, propertyNode.key.name, exportedPropertiesByFile);
           } else if (propertyNode.key.type === 'Literal' && typeof propertyNode.key.value === 'string') {
-            markExportedProp(absolutePath, propertyNode.key.value, exportedPropertiesByFile);
+            markExportedProp(absolutePathToParsedFile, propertyNode.key.value, exportedPropertiesByFile);
           } else {
-            throw new Error('OMG! I expected property with identifier or string literal key but got: ' + JSON.stringify(propertyNode)  + ' in ' + absolutePath);
+            throw new Error('OMG! I expected property with identifier or string literal key but got: ' + JSON.stringify(propertyNode) + ' in ' + absolutePathToParsedFile);
           }
         })
-      // search for simple require
+        // search for simple require
       } else if (isRequireOrResource(node)) {
-        const callExpression : ESTree.CallExpression = node as any;
+        const callExpression: ESTree.CallExpression = node as any;
         const stringNode = callExpression.arguments[0];
 
         if (stringNode.type != 'Literal') {
@@ -241,15 +227,17 @@ function processPreset(
           console.log('INCORRECT: ', requireString);
         }
 
-        const absPathToRequiredFile = absolutePathFromRequire({ requireString, appPath, absolutePath });
+        const absPathToRequiredFile = getAbsolutePathFromRequire({ requireString, appPath, absolutePathToParsedFile });
         if (absPathToRequiredFile !== null) {
-          markAsVisitedAtAll(absPathToRequiredFile);
           filesToVisit.push(absPathToRequiredFile);
 
+          requiresMap[absPathToRequiredFile] = requiresMap[absPathToRequiredFile] || {};
+          requiresMap[absPathToRequiredFile][absolutePathToParsedFile] = true;
+
           // if this is require inside `var myNode = require('acti:ui/field.js').myNode;`
-          if (node.parent && node.parent.type === 'VariableDeclarator') {
+          if (node.parent && node.parent.type !== 'MemberExpression' && node.parent.type !== 'ExpressionStatement') {
             visitedAtAsterisk[absPathToRequiredFile] = visitedAtAsterisk[absPathToRequiredFile] || [];
-            visitedAtAsterisk[absPathToRequiredFile].push(absolutePath);
+            visitedAtAsterisk[absPathToRequiredFile].push(absolutePathToParsedFile);
           }
         }
       } else {
@@ -306,9 +294,9 @@ function processPreset(
 
         const singleArg = node.arguments[0];
         const argCode = fileContents.substring(singleArg.range[0], singleArg.range[1]);
-        const dirname = path.dirname(absolutePath);
+        const dirname = path.dirname(absolutePathToParsedFile);
 
-        const evaledPath = new Function('__dirname', '__filename', `return ${argCode};`)(dirname, absolutePath.replace(/\.js$/, '.l10n'));
+        const evaledPath = new Function('__dirname', '__filename', `return ${argCode};`)(dirname, absolutePathToParsedFile.replace(/\.js$/, '.l10n'));
 
         // basis:ui paths are exceptions
         if (evaledPath.substr(0, 6) === 'basis:') {
@@ -340,7 +328,7 @@ function processPreset(
         nextToken.name === 'include' ||
         nextToken.name === 'svg'
       ) {
-        nextToken.attrs.forEach(function(attr) {
+        nextToken.attrs.forEach(function (attr) {
           if (attr.name === 'src') {
             const requireString = attr.value;
 
@@ -382,7 +370,7 @@ function processPreset(
         const absolutePathToAppDir = path.resolve(pathToRoot, appRelativePath);
         const dirname = path.dirname(absolutePathToAppDir);
 
-        nextToken.attrs.forEach(function(attr) {
+        nextToken.attrs.forEach(function (attr) {
           if (attr.name === 'src' && attr.value[0] != '{') {
             const absolutePathToRequiredFile = path.resolve(dirname, attr.value);
             filesToVisit.push(absolutePathToRequiredFile);
@@ -397,7 +385,7 @@ function processPreset(
                 .replace(/\s+$/g, '');
             const images = srcsetAttr.split(/\s*,\s*/).map(srcsetStr => srcsetStr.split(' ')[0]);
 
-            images.forEach(function(image) {
+            images.forEach(function (image) {
               if (image[0] == '{') {
                 return;
               }
@@ -460,10 +448,10 @@ function processPreset(
           const markup = getAt(dict, pathFragments);
 
           if (!markup) {
-              console.log('No markup: ', );
-              console.log(absolutePath);
-              console.log(pathFragments);
-              break;
+            console.log('No markup: ', );
+            console.log(absolutePath);
+            console.log(pathFragments);
+            break;
           }
           processTmplContents(absolutePath, markup, appRelativePath);
           break;
@@ -477,7 +465,7 @@ function processPreset(
             break;
           }
 
-          markupArray.forEach(function(markup) {
+          markupArray.forEach(function (markup) {
             processTmplContents(absolutePath, markup, appRelativePath);
           });
           break;
@@ -486,10 +474,10 @@ function processPreset(
 
 
           if (!markupObject) {
-              console.log('No markup object: ', );
-              console.log(absolutePath);
-              console.log(pathFragments);
-              break;
+            console.log('No markup object: ', );
+            console.log(absolutePath);
+            console.log(pathFragments);
+            break;
           }
 
           for (const key in markupObject) {
@@ -549,23 +537,21 @@ function processPreset(
 const visited = {};
 const visitedPropertiesByFile = {};
 const exportedPropertiesByFile = {};
-const numberOfAllRequires = {};
-const numberOfRequiresWithProp = {};
 const visitedAtAsterisk = {};
+const requiresMap = {};
 
 // start parsing from js
 [
   ['src/avipro/app', 'src/avipro/app/index.js'],
   ['src/avipro/app', 'src/avipro/remote/index.js']
-].forEach(function([appRelativePath, startFile]) {
+].forEach(function ([appRelativePath, startFile]) {
   const presetVisited = processPreset({
     appRelativePath,
     startFile,
     visitedPropertiesByFile,
     exportedPropertiesByFile,
-    numberOfAllRequires,
-    numberOfRequiresWithProp,
-    visitedAtAsterisk
+    visitedAtAsterisk,
+    requiresMap
   });
 
   for (var key in presetVisited) {
@@ -577,7 +563,7 @@ const visitedAtAsterisk = {};
 [
   'src/avipro/index.html',
   'src/avipro/remote.html'
-].forEach(function(relativePathToHtml) {
+].forEach(function (relativePathToHtml) {
   const absolutePath = path.resolve(pathToRoot, relativePathToHtml);
 
   visited[absolutePath] = true;
@@ -587,7 +573,7 @@ const visitedAtAsterisk = {};
   const filesToVisit = [];
 
   const parser = new htmlparser.Parser({
-    onopentag: function(tagname, attrs) {
+    onopentag: function (tagname, attrs) {
       let relpath = '';
 
       if (tagname === 'img') {
@@ -650,7 +636,7 @@ const visitedAtAsterisk = {};
   'src/acti/old-browser/detect.js',
   'src/avipro/static/AvitoProBetaTerms.pdf'
 ]
-  .forEach(function(relpath) {
+  .forEach(function (relpath) {
     const absolutePath = path.resolve(pathToRoot, relpath);
 
     visited[absolutePath] = true;
@@ -663,7 +649,7 @@ child_process.execSync('git ls-files', { cwd: srcPath })
   .toString()
   .split('\n')
   .map(relative => path.resolve(srcPath, relative))
-  .forEach(function(path) {
+  .forEach(function (path) {
     if (path.match('src/react')) {
       return;
     }
@@ -704,3 +690,6 @@ for (const filename in visitedPropertiesByFile) {
     }
   }
 }
+
+// This is requiresMap. It may be useful when you try to find where the file is required
+// console.log(requiresMap)

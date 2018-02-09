@@ -6,9 +6,11 @@
   "dependencies": {
     "@types/esprima": "^4.0.0",
     "@types/glob": "^5.0.32",
+    "babel-eslint": "^8.2.1",
     "basisjs": "^1.11.0",
     "css-tree": "git+https://github.com/csstree/csstree.git",
     "date-fns": "^1.29.0",
+    "eslint": "^4.17.0",
     "esprima": "^4.0.0",
     "glob": "^7.1.2",
     "htmlparser2": "^3.9.2",
