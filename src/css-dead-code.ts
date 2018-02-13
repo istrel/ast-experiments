@@ -8,10 +8,10 @@ import * as htmlparser from 'htmlparser2';
 import * as babelEslint from 'babel-eslint';
 import { debug } from 'util';
 
-const cssFilePath = process.argv[1];
+const cssFilePath = process.argv[2];
 const cssFileSource = fs.readFileSync(cssFilePath, 'utf-8');
 
-const jsFilePath = process.argv[2];
+const jsFilePath = process.argv[3];
 const jsFileSource = fs.readFileSync(jsFilePath, 'utf-8');
 
 const foundClassNames = {};
@@ -25,7 +25,7 @@ csstree.walk(cssAst, function (node) {
 
 const jsAst = babelEslint.parseForESLint(jsFileSource);
 
-const metaKeys = ['start', 'end', 'loc', 'type', 'tokens'];
+const metaKeys = ['start', 'end', 'loc', 'type', 'tokens', 'parent'];
 function walk(node, callback) {
   if (typeof node.type !== 'string') {
     return;
@@ -51,11 +51,11 @@ function walk(node, callback) {
     if (Array.isArray(value)) {
       value.forEach(childNode => {
         if (typeof childNode === 'object') {
-          walk(childNode, callback);
+          walk({...childNode, parent: node}, callback);
         }
       });
     } else {
-      walk(value, callback);
+      walk({...value, parent: node}, callback);
     }
   }
 }
@@ -90,56 +90,38 @@ walk(jsAst.ast, node => {
 });
 
 const cssImportName = foundCssImports[cssFilePath];
-
-function processLeftSide(node) {
-  if (!node) {
-    return;
-  }
-
-  if (typeof node.type !== 'string') {
-    return;
-  }
-
-  callback(node);
-
-  for (const prop in node) {
-    if (metaKeys.indexOf(prop) !== -1) {
-      continue;
-    }
-
-    const value = node[prop];
-
-    if (typeof value !== 'object') {
-      continue;
-    }
-
-    if (!value) {
-      continue;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach(childNode => {
-        if (typeof childNode === 'object') {
-          walk(childNode, callback);
-        }
-      });
-    } else {
-      walk(value, callback);
-    }
-  }
-}
+const usedClasses = {};
 
 walk(jsAst.ast, node => {
-  switch (node.type) {
-    case 'FunctionDeclaration':
-    case 'FunctionExpression':
-    case 'ArrowFunctionExpression':
-      processLeftSide(node);
+  if (node.type === 'Identifier' && node.name === cssImportName) {
+    const parent = node.parent;
 
-      node.params.forEach(processLeftSide);
-    case 'VariableDeclarator':
-      processLeftSide(node.id);
-    default:
+    if (parent.type === 'ImportDefaultSpecifier') {
       return;
+    }
+
+    if (parent.type !== 'MemberExpression') {
+      throw new Error('Not member');
+    }
+
+    const property = parent.property;
+
+    // styles['hello']
+    if (parent.computed) {
+      if (property.type !== 'Literal') {
+        throw new Error('Not literal');
+      }
+
+      usedClasses[property.value] = true;
+    } else {
+      if (property.type !== 'Identifier') {
+        throw new Error('Unexpected identifier');
+      }
+
+      usedClasses[property.name] = true;
+    }
   }
-})
+});
+
+console.log(usedClasses);
+console.log(foundClassNames);
